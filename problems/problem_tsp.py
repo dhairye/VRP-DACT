@@ -2,7 +2,7 @@ from torch.utils.data import Dataset
 import torch
 import pickle
 import os
-
+import random
 class TSP(object):
 
     NAME = 'tsp'  # Travelling Salesman Problem
@@ -213,8 +213,20 @@ class TSP(object):
         
         d1 = batch['coordinates'].gather(1, rec.long().unsqueeze(-1).expand(batch_size, size, 2))
         d2 = batch['coordinates']
-        length =  (d1  - d2).norm(p=2, dim=2).sum(1)
+
+        distances = (d1 - d2).norm(p=2, dim=2)
+
+        # For each instance, select one random edge to have a high cost
+        for i in range(batch_size):
+            # Choose a random edge index
+            high_cost_edge_idx = random.randint(0, size-2) 
+            
+            # Apply a high cost multiplier to that edge
+            distances[i, high_cost_edge_idx] *= 10000.0  
         
+        # Sum up the distances for each instance
+        length = distances.sum(1)
+
         return length
         
     @staticmethod
