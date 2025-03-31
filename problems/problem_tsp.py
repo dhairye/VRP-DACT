@@ -2,18 +2,22 @@ from torch.utils.data import Dataset
 import torch
 import pickle
 import os
-
+import random
 class TSP(object):
 
     NAME = 'tsp'  # Travelling Salesman Problem
     
-    def __init__(self, p_size, init_val_met = 'greedy', with_assert = False, step_method = '2_opt', P = 10, DUMMY_RATE = 0):
+    def __init__(self, p_size, init_val_met = 'greedy', with_assert = False, step_method = '2_opt', P = 10, DUMMY_RATE = 0, high_cost_value=100000):
         
         self.size = p_size
         self.do_assert = with_assert
         self.step_method = step_method
         self.init_val_met = init_val_met
         self.P = P
+        self.high_cost_value = high_cost_value
+        
+        # Pre-initialize the high-cost matrix
+        self.high_cost_matrix = None
         print(f'TSP with {self.size} nodes.', ' Do assert:', with_assert)
         self.train()
     
@@ -206,17 +210,35 @@ class TSP(object):
     def get_costs(self, batch, rec):
         
         batch_size, size = rec.size()
-        
+
         # check feasibility
         if self.do_assert:
             self.check_feasibility(rec)
         
         d1 = batch['coordinates'].gather(1, rec.long().unsqueeze(-1).expand(batch_size, size, 2))
         d2 = batch['coordinates']
-        length =  (d1  - d2).norm(p=2, dim=2).sum(1)
+
+        # Euclidean distances between i and j for all edges
+        distances = (d1 - d2).norm(p=2, dim=2)  
         
-        return length
+        # Create the high-cost matrix
+        if self.high_cost_matrix is None or self.high_cost_matrix.size() != distances.size():
+            self.high_cost_matrix = torch.ones_like(distances)
         
+        # For the first edge of each instance's tour
+        first_nodes = rec[:, 0]  # First node in each tour
+        second_nodes = rec.gather(1, torch.tensor([[1]]).expand(batch_size, 1).to(rec.device)).squeeze(1)  # Second node connected to first
+        
+        # Create a mask to add high cost to the first edge
+        first_edge_mask = torch.zeros_like(distances, dtype=torch.float)
+        for i in range(batch_size):
+            first_edge_mask[i, first_nodes[i]] = self.high_cost_value
+        
+        # Multiply distances with the high-cost matrix
+        weighted_distances = distances * (1 + first_edge_mask)
+        
+        return weighted_distances.sum(1)
+                
     @staticmethod
     def make_dataset(*args, **kwargs):
         return TSPDataset(*args, **kwargs)
