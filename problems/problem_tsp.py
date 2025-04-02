@@ -213,9 +213,31 @@ class TSP(object):
         
         d1 = batch['coordinates'].gather(1, rec.long().unsqueeze(-1).expand(batch_size, size, 2))
         d2 = batch['coordinates']
-        length =  (d1  - d2).norm(p=2, dim=2).sum(1)
+
+        # Returns a tensor of shape [batch_size, size] with True where points are in opposite quadrants
+        opposite_quad_mask = (d1 * d2 < 0).all(dim=2)
+
+        # Calculate orthogonal vectors by multiplying with rotation matrix
+        diff_vec = d1 - d2
+        rotational_matrix = torch.tensor([[0, 1], [-1, 0]], dtype=torch.float, device=d1.device)
+        diff_vec_reshaped = diff_vec.view(batch_size * size, 2)
+        orth_vec = torch.matmul(diff_vec_reshaped, rotational_matrix)
+        orth_vec = orth_vec.view(batch_size, size, 2)
+
+        # Check if path crosses third quadrant
+        midpoint = (d1 + d2) / 2
+        crosses_third_quad = torch.sum(midpoint * orth_vec.sign(), dim=2) < 0
+
+        length = torch.norm(d1 - d2, p=2, dim=2).sum(dim=1)
+
+        # Apply penalties
+        large_price = 1e9
+        combined_mask = opposite_quad_mask & crosses_third_quad  
+    
+        # Sum the penalties for each batch instance
+        penalty = combined_mask.sum(dim=1).float()
         
-        return length
+        return length + large_price * penalty 
         
     @staticmethod
     def make_dataset(*args, **kwargs):
@@ -238,11 +260,29 @@ class TSPDataset(Dataset):
             self.data = [self.make_instance(args) for args in data[offset:offset+num_samples]]
 
         else:
-            self.data = [{'coordinates': torch.FloatTensor(self.size, 2).uniform_(0, 1)} for i in range(num_samples)]
-        
-        self.N = len(self.data)
-        
-        print(f'{self.N} instances initialized.')
+            try:
+                self.data = []
+                
+                for i in range(num_samples):
+                    # Uncomment the below lines to create a dataset where no vertices lie in the third quadrant
+                    coords = (2 * torch.FloatTensor(self.size, 2).uniform_(0, 1)) - 1 # multiply size by 10 if needed for further filtering
+                    # print(f"Coords ({i}):\n", coords)
+                    
+                    # mask = ~((coords[:, 0] < 0) & (coords[:, 1] < 0))
+                    # filtered_coords = coords[mask]
+                    # print(f"Filtered Coords ({i}):\n", filtered_coords)
+                    
+                    # if len(filtered_coords) < self.size:
+                    #    raise ValueError(f"Not enough valid points after filtering: {len(filtered_coords)} < {self.size}")
+                    
+                    # filtered_coords = filtered_coords[:self.size]
+                    self.data.append({'coordinates': coords}) # append filtered_coords if needed
+
+                self.N = len(self.data)
+
+            except Exception as e:
+                print("An error occurred:", e)
+                raise 
     
     def make_instance(self, args):
         return {'coordinates': torch.FloatTensor(args)}
